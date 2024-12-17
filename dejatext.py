@@ -40,27 +40,26 @@ def write_markdown_report(filepath: str, title: str, data: dict, is_similarity: 
     os.makedirs(os.path.dirname(filepath), exist_ok=True)
     with open(filepath, 'w', encoding='utf-8') as f:
         f.write(f"# {title}\n\n")
-
-        # Print how many distinct duplicated entries are found
         distinct_count = len(data)
-        f.write(f"**Total Distinct Duplicated Entries:** {distinct_count}\n\n")
+        f.write(f"**Total Distinct Entries:** {distinct_count}\n\n")
 
-        for content, locations in sorted(data.items(), key=lambda x: (-len(x[1]), x[0])):
-            preview = content[:500] + "..." if len(content) > 500 else content
-            files = sorted(set([loc[0] for loc in locations] + [loc[1] for loc in locations]))
+        for content, info in sorted(data.items(), key=lambda x: (-len(x[1]['files']), x[0])):
+            preview = info['original'][:500] + "..." if len(info['original']) > 500 else info['original']
+            total_occurrences = info.get('total_occurrences', 0)
+            file_count = len(info['files'])
+            similarity = info['similarity']
             f.write(f"- Content preview:\n")
             f.write(f"  ```\n  {preview}\n  ```\n")
+            f.write(f"  **Total Occurrences:** {total_occurrences}\n\n")
+            f.write(f"  **Number of Files:** {file_count}\n\n")
 
-            if not no_file_links:
+            if not no_file_links and file_count > 0:
                 f.write("  Files:\n")
-                for file in files:
+                for file in sorted(info['files']):
                     f.write(f"  - {file}\n")
 
             if is_similarity:
-                similarities = sorted({loc[2] for loc in locations}, reverse=True)
-                for sim in similarities:
-                    f.write(f"  - **Similarity Score**: {sim}%\n")
-            f.write("\n")
+                f.write(f"  - **Max Similarity Score**: {similarity}%\n\n")
 
 def maybe_write_markdown_report(filepath: str, title: str, data: dict, is_similarity: bool = False, no_file_links: bool = False):
     if data:
@@ -69,7 +68,7 @@ def maybe_write_markdown_report(filepath: str, title: str, data: dict, is_simila
 def write_summary_csv(filepath: str, data: list):
     with open(filepath, 'w', newline='', encoding='utf-8') as f:
         writer = csv.writer(f)
-        writer.writerow(['Count', 'Similarity', 'Type', 'Content'])
+        writer.writerow(['Count', 'Similarity', 'Type', 'Content', 'Total Occurrences', 'Number of Files'])
         data.sort(key=lambda x: (-x[0], -float(str(x[1]).strip('%')), x[2]))
         for row in data:
             writer.writerow(row)
@@ -111,6 +110,8 @@ def dejatext(
     all_phrases = {}
     all_words = {}
 
+    # Index structures:
+    # Each index key = norm, value = {'files':{file:count}, 'original': original_content}
     sentence_index = {}
     paragraph_index = {}
     phrase_index = {}
@@ -121,10 +122,10 @@ def dejatext(
         if not norm:
             return
         if norm not in idx:
-            idx[norm] = {}
-        if file_path not in idx[norm]:
-            idx[norm][file_path] = 0
-        idx[norm][file_path] += 1
+            idx[norm] = {'files':{}, 'original': item}
+        if file_path not in idx[norm]['files']:
+            idx[norm]['files'][file_path] = 0
+        idx[norm]['files'][file_path] += 1
 
     # Process files
     for file_path in all_files:
@@ -174,131 +175,142 @@ def dejatext(
 
         if check_words:
             normalized_words = [w.lower().strip(string.punctuation) for w in words if w.strip(string.punctuation) and len(w.strip(string.punctuation)) > 1]
-            for w_ in set(normalized_words):
+            for w_ in normalized_words:
                 if w_ not in word_index:
-                    word_index[w_] = {}
-                if file_path not in word_index[w_]:
-                    word_index[w_][file_path] = 0
-                word_index[w_][file_path] += normalized_words.count(w_)
+                    word_index[w_] = {'files':{}, 'original': w_}
+                if file_path not in word_index[w_]['files']:
+                    word_index[w_]['files'][file_path] = 0
+                word_index[w_]['files'][file_path] += 1
+
+    # Now we store duplicates and similarities in a new structure:
+    # report[content] = {
+    #    'original': original_content,
+    #    'files': set_of_files,
+    #    'similarity': max similarity found,
+    #    'total_occurrences': sum of occurrences in all files
+    # }
 
     duplicates = {'files': {}, 'sentences': {}, 'paragraphs': {}, 'phrases': {}, 'words': {}}
     similarities = {'files': {}, 'sentences': {}, 'paragraphs': {}, 'phrases': {}, 'words': {}}
 
-    def add_to_report(report, content, file1, file2, similarity=100):
+    def add_to_report(report, content, files, similarity=100, total_occurrences=0):
         if content not in report:
-            report[content] = set()
-        report[content].add((file1, file2, similarity))
+            report[content] = {
+                'original': content,
+                'files': set(),
+                'similarity': similarity,
+                'total_occurrences': total_occurrences
+            }
+        else:
+            report[content]['similarity'] = max(report[content]['similarity'], similarity)
+        report[content]['files'].update(files)
 
-    def check_fuzzy_and_add(content_a, content_b, file1, file2, duplicates_dict, similarities_dict):
+    def add_index_based_report(report, original, file_counts, similarity=100):
+        # Calculate total occurrences and file list
+        files = file_counts.keys()
+        total_occurrences = sum(file_counts.values())
+        add_to_report(report, original, files, similarity, total_occurrences)
+
+    def similarity_check_and_add(content_a, content_b, f1, f2, duplicates_dict, similarities_dict):
         if not fuzzy:
+            # Exact match only
             if content_a == content_b:
-                add_to_report(duplicates_dict, content_a, file1, file2, 100)
+                add_to_report(duplicates_dict, content_a, [f1, f2], 100)
         else:
             score = similarity_score(content_a, content_b)
             if score == 100:
-                add_to_report(duplicates_dict, content_a, file1, file2, 100)
+                add_to_report(duplicates_dict, content_a, [f1, f2], 100)
             elif score >= fuzz_threshold:
-                add_to_report(similarities_dict, content_a, file1, file2, int(score))
+                add_to_report(similarities_dict, content_a, [f1, f2], int(score))
 
-    # Check files duplicates
+    # Check files duplicates (direct content comparison)
     if check_files:
         file_list = list(all_contents.keys())
         for i in range(len(file_list)):
-            for j in range(i, len(file_list)):
+            for j in range(i+1, len(file_list)):
                 f1, f2 = file_list[i], file_list[j]
-                if f1 == f2:
-                    continue
                 content_a = all_contents[f1]
                 content_b = all_contents[f2]
-                check_fuzzy_and_add(content_a, content_b, f1, f2, duplicates['files'], similarities['files'])
+                similarity_check_and_add(content_a, content_b, f1, f2, duplicates['files'], similarities['files'])
 
-    def index_to_list(index):
-        return [(norm, files_counts) for norm, files_counts in index.items()]
+    def check_index_duplicates(index, duplicates_dict, similarities_dict):
+        # First handle exact duplicates
+        items = list(index.items())  # (norm, {files:{}, original:})
+        # Exact duplicates: if appears in multiple files or multiple times in one file
+        for norm, data in items:
+            file_counts = data['files']
+            original = data['original']
+            if len(file_counts) > 1 or any(count > 1 for count in file_counts.values()):
+                # It's a duplicate by definition
+                add_index_based_report(duplicates_dict, original, file_counts, 100)
 
-    def check_index_duplicates(index, duplicates_dict, similarities_dict, fuzzy=False, fuzz_threshold=90):
-        items = index_to_list(index)
-
-        # First, handle exact duplicates without O(n²)
-        # If an entry appears multiple times or in multiple files, it's a duplicate
-        for norm, files_counts in items:
-            file_list = list(files_counts.keys())
-            # If appears in multiple files or more than once in the same file
-            if len(file_list) > 1 or any(count > 1 for count in files_counts.values()):
-                for fi in range(len(file_list)):
-                    for fj in range(fi, len(file_list)):
-                        f1, f2 = file_list[fi], file_list[fj]
-                        if f1 != f2 or files_counts[f1] > 1:
-                            add_to_report(duplicates_dict, norm, f1, f2, 100)
-
-        # Only do fuzzy comparisons if fuzzy is enabled
+        # Fuzzy checks if enabled
         if fuzzy:
-            # If too many items, skip fuzzy checks to prevent hanging
-            if len(items) > 500:
-                print("Skipping fuzzy checks due to large number of items (>500).")
+            # Skip if too large
+            if len(items) > 1000:
+                print("Skipping fuzzy checks due to large number of items (>1000).")
                 return
 
-            # Perform O(n²) fuzzy checks only on smaller sets
             for i in range(len(items)):
-                for j in range(i + 1, len(items)):
-                    norm_a, files_a = items[i]
-                    norm_b, files_b = items[j]
+                for j in range(i+1, len(items)):
+                    norm_a, data_a = items[i]
+                    norm_b, data_b = items[j]
                     if norm_a == norm_b:
-                        # Already handled exact match above
                         continue
-                    score = similarity_score(norm_a, norm_b)
+                    score = similarity_score(data_a['original'], data_b['original'])
                     if score >= fuzz_threshold:
-                        file_list_a = list(files_a.keys())
-                        file_list_b = list(files_b.keys())
-                        for fa in file_list_a:
-                            for fb in file_list_b:
-                                add_to_report(similarities_dict, norm_a, fa, fb, int(score))
+                        # Merge files from both
+                        merged_files = list(data_a['files'].keys()) + list(data_b['files'].keys())
+                        total_occurrences = sum(data_a['files'].values()) + sum(data_b['files'].values())
+                        add_to_report(similarities_dict, data_a['original'], merged_files, int(score), total_occurrences)
 
     if check_sentences:
-        check_index_duplicates(sentence_index, duplicates['sentences'], similarities['sentences'], fuzzy, fuzz_threshold)
+        check_index_duplicates(sentence_index, duplicates['sentences'], similarities['sentences'])
 
     if check_paragraphs:
-        check_index_duplicates(paragraph_index, duplicates['paragraphs'], similarities['paragraphs'], fuzzy, fuzz_threshold)
+        check_index_duplicates(paragraph_index, duplicates['paragraphs'], similarities['paragraphs'])
 
     if check_phrases:
-        check_index_duplicates(phrase_index, duplicates['phrases'], similarities['phrases'], fuzzy, fuzz_threshold)
+        check_index_duplicates(phrase_index, duplicates['phrases'], similarities['phrases'])
 
-    # Words check (slightly different logic because of occurrences)
+    # Check words
     if check_words:
-        items = [(w, file_counts) for w, file_counts in word_index.items()]
+        word_items = list(word_index.items()) # (norm, {files:{}, 'original':w_})
+        # Exact duplicates
+        for norm, data in word_items:
+            file_counts = data['files']
+            original = data['original']
+            if len(file_counts) > 1 or any(count > 1 for count in file_counts.values()):
+                add_index_based_report(duplicates['words'], original, file_counts, 100)
 
-        # Handle duplicates first (exact)
-        for i in range(len(items)):
-            w1, fc1 = items[i]
-            file_list = list(fc1.keys())
-            total_occurrences = sum(fc1.values())
-            # Check duplicates in the same index item
-            if len(file_list) > 1 or any(count > 1 for count in fc1.values()):
-                for fi in range(len(file_list)):
-                    for fj in range(fi, len(file_list)):
-                        f1, f2 = file_list[fi], file_list[fj]
-                        if f1 != f2 or fc1[f1] > 1:
-                            add_to_report(duplicates['words'], f"{w1} ({total_occurrences} occurrences)", f1, f2, 100)
+        # Fuzzy
+        if fuzzy and len(word_items) <= 1000:
+            for i in range(len(word_items)):
+                for j in range(i+1, len(word_items)):
+                    w1, data1 = word_items[i]
+                    w2, data2 = word_items[j]
+                    if w1 == w2:
+                        continue
+                    score = similarity_score(data1['original'], data2['original'])
+                    if score >= fuzz_threshold:
+                        merged_files = list(data1['files'].keys()) + list(data2['files'].keys())
+                        total_occurrences = sum(data1['files'].values()) + sum(data2['files'].values())
+                        add_to_report(similarities['words'], data1['original'], merged_files, int(score), total_occurrences)
+        elif fuzzy and len(word_items) > 1000:
+            print("Skipping fuzzy checks for words due to large number of items (>1000).")
 
-        # Fuzzy checks for words
-        if fuzzy:
-            # If too many items, skip fuzzy checks
-            if len(items) <= 500:
-                for i in range(len(items)):
-                    for j in range(i + 1, len(items)):
-                        w1, fc1 = items[i]
-                        w2, fc2 = items[j]
-                        if w1 == w2:
-                            # Already handled exact match
-                            continue
-                        score = similarity_score(w1, w2)
-                        if score >= fuzz_threshold:
-                            file_list_1 = list(fc1.keys())
-                            file_list_2 = list(fc2.keys())
-                            for fa in file_list_1:
-                                for fb in file_list_2:
-                                    add_to_report(similarities['words'], w1, fa, fb, int(score))
-            else:
-                print("Skipping fuzzy checks for words due to large number of items (>500).")
+    # Now we must also fix the files duplicates since they currently show pairs
+    # We currently store file content in duplicates['files'] and similarities['files'] directly.
+    # We must compute total occurrences (which for files is just "1 occurrence" per file)
+    # The number of occurrences is just the number of files. Similarity is stored.
+    # Content can be large, but we will trust the code as is.
+
+    def finalize_file_entries(data_dict):
+        for content, info in data_dict.items():
+            # total_occurrences = number of files (as each file is one occurrence)
+            info['total_occurrences'] = len(info['files'])
+    finalize_file_entries(duplicates['files'])
+    finalize_file_entries(similarities['files'])
 
     # Generate reports
     if check_files:
@@ -306,24 +318,24 @@ def dejatext(
         maybe_write_markdown_report(os.path.join(output_folder, 'similar_files.md'), "Similar Files", similarities['files'], is_similarity=True, no_file_links=no_file_links)
 
     if check_sentences:
-        dup_sents = {k: v for k, v in duplicates['sentences'].items() if len(v) > 1}
-        sim_sents = {k: v for k, v in similarities['sentences'].items() if len(v) > 1}
+        dup_sents = duplicates['sentences']
+        sim_sents = similarities['sentences']
         maybe_write_markdown_report(os.path.join(output_folder, 'duplicated_sentences.md'), "Duplicated Sentences", dup_sents, no_file_links=no_file_links)
         maybe_write_markdown_report(os.path.join(output_folder, 'similar_sentences.md'), "Similar Sentences", sim_sents, is_similarity=True, no_file_links=no_file_links)
 
     if check_paragraphs:
-        dup_paras = {k: v for k, v in duplicates['paragraphs'].items() if len(v) > 1}
-        sim_paras = {k: v for k, v in similarities['paragraphs'].items() if len(v) > 1}
+        dup_paras = duplicates['paragraphs']
+        sim_paras = similarities['paragraphs']
         maybe_write_markdown_report(os.path.join(output_folder, 'duplicated_paragraphs.md'), "Duplicated Paragraphs", dup_paras, no_file_links=no_file_links)
         maybe_write_markdown_report(os.path.join(output_folder, 'similar_paragraphs.md'), "Similar Paragraphs", sim_paras, is_similarity=True, no_file_links=no_file_links)
 
     if check_phrases:
-        dup_phrases = {p: locs for p, locs in duplicates['phrases'].items() if len(locs) > 1}
-        sim_phrases = {p: locs for p, locs in similarities['phrases'].items() if len(locs) > 1}
+        dup_phrases = duplicates['phrases']
+        sim_phrases = similarities['phrases']
         os.makedirs(os.path.join(output_folder, 'duplicated_phrases'), exist_ok=True)
         # Separate reports by phrase length
         for length in range(min_phrase_length, max_phrase_length + 1):
-            subset_dup = {p: v for p, v in dup_phrases.items() if len(p.split()) == length}
+            subset_dup = {p: v for p, v in dup_phrases.items() if len(v['original'].split()) == length}
             maybe_write_markdown_report(
                 os.path.join(output_folder, 'duplicated_phrases', f'duplicated_phrases_{length}_words.md'),
                 f"Duplicated Phrases ({length} words)", subset_dup, no_file_links=no_file_links
@@ -334,8 +346,8 @@ def dejatext(
         )
 
     if check_words:
-        dup_words_filtered = {k: v for k, v in duplicates['words'].items() if len(v) > 1}
-        sim_words_filtered = {k: v for k, v in similarities['words'].items() if len(v) > 1}
+        dup_words_filtered = duplicates['words']
+        sim_words_filtered = similarities['words']
         maybe_write_markdown_report(os.path.join(output_folder, 'duplicated_words.md'), "Duplicated Words", dup_words_filtered, no_file_links=no_file_links)
         maybe_write_markdown_report(os.path.join(output_folder, 'similar_words.md'), "Similar Words", sim_words_filtered, is_similarity=True, no_file_links=no_file_links)
 
@@ -343,42 +355,33 @@ def dejatext(
     summary_data = []
 
     def collect_summary(data, dtype):
-        seen = set()
+        # data is {content: {'original':..., 'files':set(), 'similarity':..., 'total_occurrences':...}}
         rows = []
-        for content, locs in data.items():
-            if content not in seen:
-                seen.add(content)
-                unique_files = len(set([l[0] for l in locs] + [l[1] for l in locs]))
-                sim = list(locs)[0][2]
-                clean_content = content
-                if len(clean_content) > 100:
-                    clean_content = clean_content[:100] + "..."
-                rows.append([unique_files, f"{sim}%", dtype, clean_content])
+        for content, info in data.items():
+            unique_files = len(info['files'])
+            sim = info['similarity']
+            clean_content = info['original']
+            if len(clean_content) > 100:
+                clean_content = clean_content[:100] + "..."
+            total_occ = info['total_occurrences']
+            rows.append([unique_files, f"{sim}%", dtype, clean_content, total_occ, unique_files])
         return rows
 
     if check_files:
         summary_data.extend(collect_summary(duplicates['files'], 'File'))
         summary_data.extend(collect_summary(similarities['files'], 'File'))
     if check_sentences:
-        dup_sents_filtered = {k: v for k, v in duplicates['sentences'].items() if len(v) > 1}
-        sim_sents_filtered = {k: v for k, v in similarities['sentences'].items() if len(v) > 1}
-        summary_data.extend(collect_summary(dup_sents_filtered, 'Sentence'))
-        summary_data.extend(collect_summary(sim_sents_filtered, 'Sentence'))
+        summary_data.extend(collect_summary(duplicates['sentences'], 'Sentence'))
+        summary_data.extend(collect_summary(similarities['sentences'], 'Sentence'))
     if check_paragraphs:
-        dup_paras_filtered = {k: v for k, v in duplicates['paragraphs'].items() if len(v) > 1}
-        sim_paras_filtered = {k: v for k, v in similarities['paragraphs'].items() if len(v) > 1}
-        summary_data.extend(collect_summary(dup_paras_filtered, 'Paragraph'))
-        summary_data.extend(collect_summary(sim_paras_filtered, 'Paragraph'))
+        summary_data.extend(collect_summary(duplicates['paragraphs'], 'Paragraph'))
+        summary_data.extend(collect_summary(similarities['paragraphs'], 'Paragraph'))
     if check_phrases:
-        dup_phrases_filtered = {k: v for k, v in duplicates['phrases'].items() if len(v) > 1}
-        sim_phrases_filtered = {k: v for k, v in similarities['phrases'].items() if len(v) > 1}
-        summary_data.extend(collect_summary(dup_phrases_filtered, 'Phrase'))
-        summary_data.extend(collect_summary(sim_phrases_filtered, 'Phrase'))
+        summary_data.extend(collect_summary(duplicates['phrases'], 'Phrase'))
+        summary_data.extend(collect_summary(similarities['phrases'], 'Phrase'))
     if check_words:
-        dup_words_filtered = {k: v for k, v in duplicates['words'].items() if len(v) > 1}
-        sim_words_filtered = {k: v for k, v in similarities['words'].items() if len(v) > 1}
-        summary_data.extend(collect_summary(dup_words_filtered, 'Word'))
-        summary_data.extend(collect_summary(sim_words_filtered, 'Word'))
+        summary_data.extend(collect_summary(duplicates['words'], 'Word'))
+        summary_data.extend(collect_summary(similarities['words'], 'Word'))
 
     write_summary_csv(os.path.join(output_folder, 'summary_report.csv'), summary_data)
 
