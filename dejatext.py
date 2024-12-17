@@ -174,12 +174,12 @@ def dejatext(
 
         if check_words:
             normalized_words = [w.lower().strip(string.punctuation) for w in words if w.strip(string.punctuation) and len(w.strip(string.punctuation)) > 1]
-            for w in set(normalized_words):
-                if w not in word_index:
-                    word_index[w] = {}
-                if file_path not in word_index[w]:
-                    word_index[w][file_path] = 0
-                word_index[w][file_path] += words.count(w)
+            for w_ in set(normalized_words):
+                if w_ not in word_index:
+                    word_index[w_] = {}
+                if file_path not in word_index[w_]:
+                    word_index[w_][file_path] = 0
+                word_index[w_][file_path] += normalized_words.count(w_)
 
     duplicates = {'files': {}, 'sentences': {}, 'paragraphs': {}, 'phrases': {}, 'words': {}}
     similarities = {'files': {}, 'sentences': {}, 'paragraphs': {}, 'phrases': {}, 'words': {}}
@@ -215,30 +215,38 @@ def dejatext(
     def index_to_list(index):
         return [(norm, files_counts) for norm, files_counts in index.items()]
 
-    def check_index_duplicates(index, duplicates_dict, similarities_dict):
+    def check_index_duplicates(index, duplicates_dict, similarities_dict, fuzzy=False, fuzz_threshold=90):
         items = index_to_list(index)
-        for i in range(len(items)):
-            for j in range(i, len(items)):
-                norm_a, files_a = items[i]
-                norm_b, files_b = items[j]
-                if i == j:
-                    # same normalized content in multiple files or counts
-                    file_list = list(files_a.keys())
-                    for fi in range(len(file_list)):
-                        for fj in range(fi, len(file_list)):
-                            f1, f2 = file_list[fi], file_list[fj]
-                            if f1 != f2 or files_a[f1] > 1:
-                                add_to_report(duplicates_dict, norm_a, f1, f2, 100)
-                else:
-                    score = similarity_score(norm_a, norm_b) if fuzzy else (100 if norm_a == norm_b else 0)
-                    if score == 100:
-                        file_list_a = list(files_a.keys())
-                        file_list_b = list(files_b.keys())
-                        for fa in file_list_a:
-                            for fb in file_list_b:
-                                if fa != fb or (fa == fb and (files_a[fa] > 1 or files_b[fb] > 1)):
-                                    add_to_report(duplicates_dict, norm_a, fa, fb, 100)
-                    elif fuzzy and score >= fuzz_threshold:
+
+        # First, handle exact duplicates without O(n²)
+        # If an entry appears multiple times or in multiple files, it's a duplicate
+        for norm, files_counts in items:
+            file_list = list(files_counts.keys())
+            # If appears in multiple files or more than once in the same file
+            if len(file_list) > 1 or any(count > 1 for count in files_counts.values()):
+                for fi in range(len(file_list)):
+                    for fj in range(fi, len(file_list)):
+                        f1, f2 = file_list[fi], file_list[fj]
+                        if f1 != f2 or files_counts[f1] > 1:
+                            add_to_report(duplicates_dict, norm, f1, f2, 100)
+
+        # Only do fuzzy comparisons if fuzzy is enabled
+        if fuzzy:
+            # If too many items, skip fuzzy checks to prevent hanging
+            if len(items) > 500:
+                print("Skipping fuzzy checks due to large number of items (>500).")
+                return
+
+            # Perform O(n²) fuzzy checks only on smaller sets
+            for i in range(len(items)):
+                for j in range(i + 1, len(items)):
+                    norm_a, files_a = items[i]
+                    norm_b, files_b = items[j]
+                    if norm_a == norm_b:
+                        # Already handled exact match above
+                        continue
+                    score = similarity_score(norm_a, norm_b)
+                    if score >= fuzz_threshold:
                         file_list_a = list(files_a.keys())
                         file_list_b = list(files_b.keys())
                         for fa in file_list_a:
@@ -246,46 +254,51 @@ def dejatext(
                                 add_to_report(similarities_dict, norm_a, fa, fb, int(score))
 
     if check_sentences:
-        check_index_duplicates(sentence_index, duplicates['sentences'], similarities['sentences'])
+        check_index_duplicates(sentence_index, duplicates['sentences'], similarities['sentences'], fuzzy, fuzz_threshold)
 
     if check_paragraphs:
-        check_index_duplicates(paragraph_index, duplicates['paragraphs'], similarities['paragraphs'])
+        check_index_duplicates(paragraph_index, duplicates['paragraphs'], similarities['paragraphs'], fuzzy, fuzz_threshold)
 
     if check_phrases:
-        check_index_duplicates(phrase_index, duplicates['phrases'], similarities['phrases'])
+        check_index_duplicates(phrase_index, duplicates['phrases'], similarities['phrases'], fuzzy, fuzz_threshold)
 
+    # Words check (slightly different logic because of occurrences)
     if check_words:
         items = [(w, file_counts) for w, file_counts in word_index.items()]
+
+        # Handle duplicates first (exact)
         for i in range(len(items)):
-            for j in range(i, len(items)):
-                w1, fc1 = items[i]
-                w2, fc2 = items[j]
-                if i == j:
-                    # same word multiple files
-                    file_list = list(fc1.keys())
-                    total_occurrences = sum(fc1.values())
-                    for fi in range(len(file_list)):
-                        for fj in range(fi, len(file_list)):
-                            f1, f2 = file_list[fi], file_list[fj]
-                            if f1 != f2 or fc1[f1] > 1:
-                                # Keep the occurrences info for words
-                                add_to_report(duplicates['words'], f"{w1} ({total_occurrences} occurrences)", f1, f2, 100)
-                else:
-                    score = similarity_score(w1, w2) if fuzzy else (100 if w1 == w2 else 0)
-                    if score == 100:
-                        file_list_1 = list(fc1.keys())
-                        file_list_2 = list(fc2.keys())
-                        for fa in file_list_1:
-                            for fb in file_list_2:
-                                if fa != fb or fc1[fa] > 1 or fc2[fb] > 1:
-                                    # Keep the "multiple" wording for words that appear in multiple files
-                                    add_to_report(duplicates['words'], f"{w1} (multiple)", fa, fb, 100)
-                    elif fuzzy and score >= fuzz_threshold:
-                        file_list_1 = list(fc1.keys())
-                        file_list_2 = list(fc2.keys())
-                        for fa in file_list_1:
-                            for fb in file_list_2:
-                                add_to_report(similarities['words'], w1, fa, fb, int(score))
+            w1, fc1 = items[i]
+            file_list = list(fc1.keys())
+            total_occurrences = sum(fc1.values())
+            # Check duplicates in the same index item
+            if len(file_list) > 1 or any(count > 1 for count in fc1.values()):
+                for fi in range(len(file_list)):
+                    for fj in range(fi, len(file_list)):
+                        f1, f2 = file_list[fi], file_list[fj]
+                        if f1 != f2 or fc1[f1] > 1:
+                            add_to_report(duplicates['words'], f"{w1} ({total_occurrences} occurrences)", f1, f2, 100)
+
+        # Fuzzy checks for words
+        if fuzzy:
+            # If too many items, skip fuzzy checks
+            if len(items) <= 500:
+                for i in range(len(items)):
+                    for j in range(i + 1, len(items)):
+                        w1, fc1 = items[i]
+                        w2, fc2 = items[j]
+                        if w1 == w2:
+                            # Already handled exact match
+                            continue
+                        score = similarity_score(w1, w2)
+                        if score >= fuzz_threshold:
+                            file_list_1 = list(fc1.keys())
+                            file_list_2 = list(fc2.keys())
+                            for fa in file_list_1:
+                                for fb in file_list_2:
+                                    add_to_report(similarities['words'], w1, fa, fb, int(score))
+            else:
+                print("Skipping fuzzy checks for words due to large number of items (>500).")
 
     # Generate reports
     if check_files:
