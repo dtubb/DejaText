@@ -1,0 +1,6 @@
+This is an example sentence.
+This is an example sentence.
+Something new here.
+Another unique line.
+
+But, this is a duplicatged paragraph. To ensure that the report does not list the same duplicated content multiple times and clearly indicates when content is duplicated within the same file or across multiple files, we need to adjust the way we aggregate and report the duplicates. Specifically, we should ensure that each pair of files is listed only once, regardless of the order.
