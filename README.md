@@ -45,15 +45,16 @@
    ```bash
    pip install -r requirements.txt
    ```
-    
-Dependencies
+
+### Dependencies
+
 - typer (for CLI)
 - difflib (standard library, used for similarity)
 - csv, hashlib, re, string, os (standard library)
 
 (The requirements.txt file should list any external dependencies.)
 
-Usage
+## **Usage**
 
 Run DejaText from the command line as follows:
 ```bash
@@ -67,7 +68,7 @@ For example:
 python dejatext.py ./notes
 ```
 
-Options
+### Options
 
 | Option                   | Description                                      | Default         |
 |--------------------------|--------------------------------------------------|-----------------|
@@ -83,7 +84,7 @@ Options
 | --fuzz-threshold                           | Minimum similarity percentage for fuzzy matches  | 90              |
 | --no-file-links                            | Disable listing file names in the reports        | False           |
 
-Example
+### Example
 
 Assume you have the following files in the notes directory:
 
@@ -110,21 +111,3 @@ Possible output (if duplicates are found):
 - `summary_report.csv` summarizes the number of duplicates found.
 
 If no duplicates are found in any category, no empty reports are created, and the summary remains minimal.
-
-Features
-- Detects exact duplicates of files, sentences, paragraphs, phrases, and words.
-- Optional fuzzy matching to find similar text above a specified similarity threshold.
-- Automatically organizes results into a dedicated output directory.
-- Produces both markdown reports and a summary CSV for quick reference.
-- Flexibly enable/disable checks for different text segments.
-- Easily adjust phrase length boundaries for more fine-grained control.
-    
-License
-
-MIT License
-    
-Future Enhancements
-- Additional filtering or grouping options.
-- More sophisticated similarity scoring methods.
-- Improved scalability and performance optimizations for very large document sets.
-

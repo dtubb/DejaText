@@ -1,4 +1,6 @@
 typer
-rich
-fuzzywuzzy
-python-Levenshtein
+csv
+hashlib
+re
+string
+difflib
