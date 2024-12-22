@@ -81,22 +81,35 @@ def cleanup(
 
     def delete_duplicates(index, content_type):
         for norm, data in index.items():
-            files = data['files']
-            if len(files) > 1:
-                for file_path in files[1:]:
+            sorted_file_list = sorted(data['files'], key=natural_sort_key)
+            first_file = sorted_file_list[0]  # First file that contains this content
+            
+            for file_path in sorted_file_list:
+                if os.path.exists(file_path):
                     with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
                         content = f.read()
+                    
                     if content_type == 'file':
-                        os.remove(file_path)
-                        typer.echo(f"Deleted duplicate file: {file_path}")
+                        if file_path != first_file:
+                            os.remove(file_path)
+                            typer.echo(f"Deleted duplicate file: {file_path}")
                     else:
-                        if content_type == 'paragraph':
-                            content = content.replace(data['original'], "[[deleted]]")
-                        elif content_type == 'sentence':
-                            content = content.replace(data['original'], "[[deleted]]")
-                        with open(file_path, 'w', encoding='utf-8') as f:
-                            f.write(content)
-                        typer.echo(f"Updated file with deleted {content_type}: {file_path}")
+                        pattern_compiled = re.compile(re.escape(data['original']), re.DOTALL | re.MULTILINE)
+                        is_first_file = file_path == first_file
+
+                        def replace_matches(m):
+                            nonlocal is_first_file
+                            if is_first_file:
+                                # Keep the first instance in the first file
+                                is_first_file = False  # Subsequent matches in this file will be deleted
+                                return m.group(0)
+                            return "{del}"
+
+                        new_content = pattern_compiled.sub(replace_matches, content)
+                        if new_content != content:
+                            with open(file_path, 'w', encoding='utf-8') as f:
+                                f.write(new_content)
+                            typer.echo(f"Updated file with deleted {content_type}: {file_path}")
 
     if check_files:
         delete_duplicates(file_index, 'file')
@@ -111,3 +124,4 @@ def cleanup(
 
 if __name__ == "__main__":
     app()
+
