@@ -29,7 +29,7 @@ for input in "${input_paths[@]}"; do
   echo "Output folder: $output_folder"
   
   # Run dejatext_cleanup.py with the input directory
-  python dejatext_cleanup.py "$input" --output-folder "$output_folder" --verbose
+  python dejatext_cleanup.py cleanup "$input" --output-folder "$output_folder" --verbose
   
   echo "✅ Cleanup completed for: $input"
   echo "📁 Results saved to: $output_folder"

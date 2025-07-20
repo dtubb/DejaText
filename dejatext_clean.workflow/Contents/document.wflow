@@ -90,7 +90,7 @@ for input in "${input_paths[@]}"; do
   echo "Output folder: $output_folder"
   
   # Run dejatext_cleanup.py with file, sentence, and paragraph duplicate checking
-  python dejatext_cleanup.py "$input" \
+  python dejatext_cleanup.py cleanup "$input" \
     --output-folder "$output_folder" \
     --check-files \
     --check-sentences \
