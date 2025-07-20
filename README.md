@@ -16,6 +16,7 @@
      - **Paragraphs**: Flag paragraphs found verbatim or with similarity in multiple files.
      - **Phrases**: Find recurring or similar multi-word phrases within and across files.
      - **Words**: Highlight words that appear frequently across files.
+   - **YAML Frontmatter Handling**: Automatically detects and preserves YAML frontmatter in markdown files while removing it for duplicate detection. Supports complex YAML formats including field-prefixed YAML blocks.
    - **Fuzzy Matching** (optional):  
      If enabled, DejaText uses a specified similarity threshold to consider non-identical but similar text as well. If disabled, only exact matches are reported.
        
