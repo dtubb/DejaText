@@ -12,6 +12,24 @@ def natural_sort_key(s):
     return [int(text) if text.isdigit() else text.lower()
             for text in re.split('([0-9]+)', str(s))]
 
+def remove_yaml_frontmatter(content: str) -> str:
+    """Remove YAML frontmatter from the beginning of text content."""
+    # Pattern to match YAML frontmatter: --- at start, followed by content, ending with ---
+    # Only match if there's actual YAML content between the --- markers (not just a single line)
+    # Handle multiple consecutive YAML blocks
+    frontmatter_pattern = r'^---\s*\n(.+?\n)+---\s*\n'
+    
+    # Keep removing YAML frontmatter blocks until none are left
+    while True:
+        match = re.match(frontmatter_pattern, content, re.DOTALL)
+        if match:
+            # Remove the frontmatter and continue
+            content = content[match.end():]
+        else:
+            break
+    
+    return content
+
 def hash_content(content: str) -> str:
     return hashlib.md5(content.encode('utf-8')).hexdigest()
 
@@ -131,6 +149,9 @@ def dejatext(
     for file_path in all_files:
         with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
             content = f.read()
+
+        # Remove YAML frontmatter before processing
+        content = remove_yaml_frontmatter(content)
 
         all_contents[file_path] = content
         if not content.strip():
