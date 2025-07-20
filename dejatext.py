@@ -6,7 +6,14 @@ import string
 import typer
 from difflib import SequenceMatcher
 
+__version__ = "0.0.1.dev2"
+
 app = typer.Typer()
+
+@app.command()
+def version():
+    """Show the version of DejaText."""
+    typer.echo(f"DejaText version {__version__}")
 
 def natural_sort_key(s):
     return [int(text) if text.isdigit() else text.lower()

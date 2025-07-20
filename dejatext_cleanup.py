@@ -6,7 +6,14 @@ import typer
 import signal
 from contextlib import contextmanager
 
+__version__ = "0.0.1.dev2"
+
 app = typer.Typer()
+
+@app.command()
+def version():
+    """Show the version of DejaText Cleanup."""
+    typer.echo(f"DejaText Cleanup version {__version__}")
 
 @contextmanager
 def timeout(seconds):
